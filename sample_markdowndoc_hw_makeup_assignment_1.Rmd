@@ -1,0 +1,155 @@
+---
+title: "Make Up problem set for ec"
+author: "Alfredo Novoa"
+date: "December 7, 2018"
+urlcolor: blue
+output: 
+  pdf_document:
+    toc: true 
+    toc_depth: 1
+    df_print: tibble 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Assignment Overview: From Professor Jaquette's Emails
+
+*"I want you to think of a __user-written function or loop__ to do something useful/interesting with data [can be data from this class or data from some other source]. Has to be more substantial than the functions/loops I had you work on for homework, but not too far beyond that.*
+ 
+*Then I want you to develop a beta version of that function or loop. And then you will turn in two functions or two loops or one function and one loop.*
+
+*Due within 24 hours.*
+
+
+##Step 1: Select and Download Data
+
+**for this assignment **
+Data source: College Scorecard Data: https://collegescorecard.ed.gov/data/
+
+Most Recent Cohort Import URL:https://ed-public-download.app.cloud.gov/downloads/Most-Recent-Cohorts-All-Data-Elements.csv  
+Plus the data dictionary for the most recent cohort data 
+
+*May not work out the gate so we need to make sure.* 
+Objective: Add variable labels to the dataset (checked with glimpse()).
+Based on the Bonus Question for Problem set 8
+
+
+```{r }
+
+rm(list= ls())
+
+library(readr)
+library(tidyverse)
+library(haven)
+library(labelled)
+
+## -----------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
+#downloading scorecard data without overwriting directories
+## -----------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
+
+
+## CHOOSE OUTPUT DIRECTORY (DEFAULT == '.', which is current directory)
+getwd()
+#linux pc "/home/freddy/Documents/UCLA/rclass_fall18/rclass_directory/problemsets/Make Up Assignment Brainstorm"
+out_dir = '.'
+## default values for our functions 
+primary_data=TRUE
+scorecard_data = TRUE
+dictionary = TRUE
+## overwrite already downloaded files
+overwrite = FALSE
+## message print with adjusted layout for formatting purposes to make it easy to see when a new step has begun
+mess <- function(to_screen) {
+  message(rep('-',80))#creates an 80 char dash format
+  message(to_screen)
+  message(rep('-',80))
+}
+
+
+## create folders if they don't exist
+## creating a subdirectory function
+mess('Creating directories for downloaded files')
+make_dir <- function(opt, dir_name) {
+  if (opt & dir.exists(dir_name)) {
+    message(paste0('Already have directory: ', dir_name))
+  } else if (opt & !dir.exists(dir_name)) {
+    message(paste0('Creating directory: ', dir_name))
+    dir.create(dir_name)
+  }
+}
+## initialize potential file paths
+data_dir <- file.path(out_dir, 'data');typeof(data_dir) #define data folder path
+scorecard_dir <- file.path(out_dir, 'scorecard_dir') #define scorecard folder path
+dictionary_dir <- file.path(out_dir,'dictionary') #define dictionary folder path
+## checking and creating
+typeof(data_dir)
+make_dir(TRUE, out_dir)#testing
+make_dir(primary_data, data_dir)
+make_dir(scorecard_data, scorecard_dir)
+#this doesn't show up but it should work once I call the file
+
+make_dir(dictionary, dictionary_dir)
+
+
+
+mess('Time to download the files!')
+
+get_file <- function(opt, dir_name, url, file, suffix, overwrite) {
+  if (opt) {
+    dest <- file.path(dir_name, paste0(file, suffix))
+    if (file.exists(dest) & !overwrite) {
+      message(paste0('Already have file: ', dest))
+      return(0)
+    } else {
+      download.file(paste0(url, file, suffix), dest)#notice file name cat()s , good for batch url exports 
+      Sys.sleep(1)
+      return(1)
+    }
+  }
+}
+#note: the URL structure in this function depends on the data host to make data available in the same folder
+
+scdata_file_url <- "https://ed-public-download.app.cloud.gov/downloads/"
+#not included because of function str:'Most-Recent-Cohorts-All-Data-Elements.csv'
+dict_file_url <- "https://collegescorecard.ed.gov/assets/" 
+#not included because of function str: 'CollegeScorecardDataDictionary.xlsx'
+
+## data
+sc_recent_cohort <- get_file(scorecard_data, scorecard_dir, scdata_file_url, 'Most-Recent-Cohorts-All-Data-Elements', '.csv', overwrite)
+
+sc_cohort_dictionary <- get_file(dictionary, dictionary_dir, dict_file_url, 'CollegeScorecardDataDictionary', '.xlsx', overwrite)
+
+mess("Now lets Import a subsample of the the Dataset file")
+#Review documentation before reading in data! 
+#sc_mrcohort <- read_csv("./scorecard_dir/Most-Recent-Cohorts-All-Data-Elements.csv") #this didn't work
+sc_mrcohort2 <- as.tibble(read.csv("./scorecard_dir/Most-Recent-Cohorts-All-Data-Elements.csv", 
+                        header = TRUE, fill = TRUE, comment.char = ""))
+
+names(sc_mrcohort2) <- tolower(names(sc_mrcohort2))
+sc_mrcohort2 <- sc_mrcohort2 %>%
+  select(opeid6, opeid, instnm, city, stabbr, zip, region, latitude,longitude, ccbasic, adm_rate, adm_rate_all,
+         pcip01, pcip03, pcip04, pcip05, pcip09, pcip10, pcip11, pcip12, pcip13, pcip14, pcip15, pcip16, pcip19,
+         pcip22, pcip23, pcip24, pcip25, pcip26, pcip27, pcip29, pcip30, pcip31, pcip38, pcip39, pcip40, pcip41,
+         pcip42, pcip43, pcip44, pcip45, pcip46, pcip47, pcip48, pcip49, pcip50, pcip51, pcip52)
+
+#Change names to lowercase  
+names(sc_mrcohort2) 
+
+
+head(sc_mrcohort) 
+
+#next steps
+#import the dictionary file.
+#make everything lowercase 
+#use the variable names column to match the name to the var description.
+#try looping and using 'else if' to check if the variable name in the dictionary sheet is in the current dataset
+#if yes, then append the variable description to the var_label
+#ran out of time but I hit
+
+
+```
+Sorry Profe, I ran out of time to finish the dictionary variable names import. However, I believe I've met the criteria for the bonus assignment, I hope that's okay.
