@@ -1,0 +1,730 @@
+---
+title: "learning_corale_IBD_rds_anovoa"
+author: "Alfredo_Novoa"
+date: "5/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Notes
+- The only note here is whenever I restore a `lock.file()` if I have more recent versions of a library it suggests I restart my R session to run the older version. BUT once I restart it doesn't have any of the libraries loaded (even though I saved the workspace image) and requires I run renv again. I've tried running `renv::load(project = getwd())` and it says its already synced. but the packages say NOT INSTALLED in the package library.
+
+```{r}
+###############################################################
+#DATA IMPORT
+rm(list = ls())
+getwd()
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(evaluate)
+library(Hmisc)
+library(tableone)
+library(labelled)
+library(rstatix)
+library(ggpubr)
+library(table1)
+library(hrbrthemes)
+```
+
+
+```{r}
+#sourcing an R script to import and set up the data
+#source("../code/CORALEIBD_R_2021-03-31_1200.r", local = FALSE)
+#note the local version of this file defines the 'data' in the correct folder see below
+data <- read_rds("../data/deid_ibdc2_27_apr.rds")
+
+#interesting challenge was that the original script was more thorough than what I need and was given due to HIPAA guidelines
+#errors in code make the source command stop. 
+#using different package to push through the errors 
+replay(evaluate(file("../code/copyCORALEIBD_R_2021-03-31_1200.r")))
+#boss said not to use this file cuz the factor variables make it tricky
+#check id_hcw_ibd in the updated one
+#this creates more variables than I need which is okay. 
+#ultimately the most useful stuff are the variable descriptions. 
+
+
+#################################################################
+#VARIABLE SETUP
+
+#checking errors for file
+evalres <- evaluate(file("../code/copyIBD_R_2021-03-31_1200.r"))
+ierr <- grepl("error|warning", sapply(evalres, class))
+replay(evalres[ierr]) #didnt affect key variables in the data
+#errors I saw only applied to variables that were missing from my data which is perfect 
+
+#importing and adding variable data from dictionary
+dict_file <- read_csv("../data/CORALEIBD_DataDictionary_2021-03-10 (1).csv", col_names = TRUE)
+dictionary_names <- dict_file$`Variable / Field Name`
+dictionary_labels <- dict_file$`Field Label`
+#levels of each variable is tricky. need to come back to it.
+
+#wasn't given unique IDs for privacy reasons? 
+#data is raw export from redcap so sort should stay the same 
+data <- data %>% mutate(id_nrow = row_number())
+glimpse(data) #checking if labels and levels it worked
+levels(data$ethnicity)
+labels(data$srv_household_autoimmune.factor)
+###################################################################
+```
+I can look at 2_table_1 updated variables and append relevant vars to explore the GI symptoms after dose 1|&2 
+
+two types of questions,
+- local injection site reactions
+- systemic reactions
+  -- within these are the GI questions (Nausea, vomiting, diarrhea )
+  
+- IBD Disease types (umbrella term)
+  - Crohns Disease (CD)
+  - Ulcerative Colitis (UC/IC)
+  
+any figures should be saved as PNG.s and added to box just in case.
+
+```{r}
+##############################################################
+#getting to know the dataset
+typeof(data)
+#str(data)
+data_names <- as.tibble(names(data))
+
+data %>% group_by(covid19_vaccine_symptoms_after_dose_1_complete) %>%
+  count() %>% ungroup() #1771 complete surveys
+data %>% group_by(covid19_vaccine_symptoms_after_dose_2_complete) %>%
+  count() %>% ungroup() #1438 complete surveys
+data %>% group_by(covid19_vaccine_symptoms_after_dose_1_complete,covid19_vaccine_symptoms_after_dose_2_complete) %>%
+  count() %>% ungroup() 
+#1331 participants completed both surveys
+#440 completed the first dose survey
+#107 complete the second dose
+
+```
+
+
+```{r}
+symp_after_by_vaxtype <- vaxd_data %>% filter(is.na(vaccine_type)) %>%
+  group_by(vaccine_type,
+                       any_1st_dose_sx,
+                       any_1st_dose_sx_v2) %>% 
+  summarise(n_per_group=n(), ) %>% ungroup() 
+#there are 386 who completed at least 1 questionnaire and didnt report vax type
+#295 still reported some sort of new symptom after receiving a vax though.
+
+
+##################################
+#Other checks
+vaxd_data %>% filter(!is.na(vaccine_type)) %>% group_by(id_hcw_ibd) %>% summarise(n_hcw_ibd =n()) %>% ungroup
+#group 1 is IBD since the HCW group has all pfizer vaccines
+
+
+###########################################################
+#zeroing in on the GI symptoms
+typeof(vaxd_data$post_vaccine_symptom___7)
+
+#symptom questions
+#levels(data$any_1st_dose_sx.factor)=c("Yes","No","Not sure")
+#levels(data$any_1st_dose_sx_v2.factor)=c("Yes","No","Not sure")
+#data$any_1st_dose_sx.factor = factor(data$any_1st_dose_sx,levels=c("1","0","2"))
+#data$any_1st_dose_sx_v2.factor = factor(data$any_1st_dose_sx_v2,levels=c("1","0","2"))
+
+vaxd_data %>% filter(!is.na(vaccine_type)) %>% 
+  group_by(any_1st_dose_sx) %>% 
+  summarise(n_per_group=n(), ) %>% 
+  ungroup #633 had new symptoms 
+
+vaxd_data %>% filter(!is.na(vaccine_type)) %>% 
+  group_by(any_1st_dose_sx_v2) %>% 
+  summarise(n_per_group=n(), ) %>% 
+  ungroup #719 had new symptoms
+#total new symptoms 1352
+#unique=962
+
+```
+
+Variable Creation
+
+```{r}
+#vaxd_data <- vaxd_data %>% mutate(
+ # post_vax_symptom_7_int = as.integer(post_vaccine_symptom___7),
+  #nausea_timing_int = as.integer(nausea_timing),
+  #vomiting_timivomiting_timing, diarrhea_timing, constipation_timing,
+    #                       gerd_timing, abdo_timing)
+
+
+#### Timing Levels after dose 1
+ #1, Persisted for < 1 hour | 
+ # 2, Persisted for < 1 day |
+ # 3, Persisted for 1-2 days |
+ # 4, Persisted up to 1 week |
+ # 5, Persisted for >1 week |
+ # 0, Never
+
+#### Severity Levels
+# 0, None |
+# 1, MILD |
+# 2, MODERATE |
+# 3, SEVERE |
+# 4, EXTREME
+
+vaxd_data %>% filter(any_1st_dose_sx == 1 | 
+           any_1st_dose_sx_v2 == 1) %>% group_by(post_vaccine_symptom___7) %>% 
+  summarise(
+    n_symptafterdose1 = n())
+#74 people experienced gi symptoms after dose 1
+#n=1257
+vaxd_data %>% filter(any_1st_dose_sx == 1 | 
+           any_1st_dose_sx_v2 == 1) %>% group_by(post_vaccine_symptom_v2___7) %>% 
+  summarise(
+    n_symptafterdose2 = n())
+#184 people experienced symptoms after dose 2
+
+###################################################################
+#creating numeric variables
+vaxd_data <- vaxd_data %>% mutate(across(starts_with("postvax1_local"), as.numeric),
+    across(starts_with("post_vaccine_symptom_"), ~as.logical(as.numeric(.x))),
+    across(contains("timing"), as.numeric),
+    across(contains("sev"), as.numeric),
+    across(one_of("change_in_hearing", "change_in_hearing_v2", "change_in_vision", "change_in_vision_v2"), as.numeric))
+
+typeof(vaxd_data$nausea_timing)#type double/numeric
+
+#vaccine type responses
+#1, BNT162 (Pfizer/BioNtech) | 2, mRNA-1273 (Moderna/NIH) | 
+#3, AZD12222 (AstraZeneca) | 6, JNJ-78436725 (Johnson & Johnson) |
+#4, Other | 5, Not sure 
+#use the orignal. nausea_sev, vomiting_sev, diarrhea_sev, constipation_sev,        stomach_burning_sev, abdominal_pain_sev,
+
+###############################################################
+#some people responded not sure to questions with branch logic so we need to resolve the "NOT SURE" Responses
+vaxd_data <- vaxd_data %>%
+  mutate(
+    survey1 = !is.na(any_1st_dose_sx), # did they answer the first question,
+    survey2 = !is.na(any_1st_dose_sx_v2), # did they answer the first question,
+    age = as.numeric(age),
+    any_symptom_v1 = any_1st_dose_sx,
+    any_symptom_v1 = if_else(any_1st_dose_sx == 2 & all(
+      post_vaccine_symptom___1 == FALSE,
+      post_vaccine_symptom___2 == FALSE,
+      post_vaccine_symptom___3 == FALSE,
+      post_vaccine_symptom___4 == FALSE,
+      post_vaccine_symptom___5 == FALSE,
+      post_vaccine_symptom___6 == FALSE,
+      post_vaccine_symptom___7 == FALSE,
+      post_vaccine_symptom___8 == FALSE,
+      post_vaccine_symptom___9 == FALSE,
+      post_vaccine_symptom___10 == FALSE,
+      post_vaccine_symptom___11 == FALSE,
+      post_vaccine_symptom___12 == FALSE,
+      postvax1_local_pain == 0,
+      postvax1_local_redness == 0,
+      postvax1_local_swelling == 0), "No", as.character(any_1st_dose_sx)),
+    any_symptom_v1 = if_else(any_1st_dose_sx == 2 & !all(
+      post_vaccine_symptom___1 == FALSE,
+      post_vaccine_symptom___2 == FALSE,
+      post_vaccine_symptom___3 == FALSE,
+      post_vaccine_symptom___4 == FALSE,
+      post_vaccine_symptom___5 == FALSE,
+      post_vaccine_symptom___6 == FALSE,
+      post_vaccine_symptom___7 == FALSE,
+      post_vaccine_symptom___8 == FALSE,
+      post_vaccine_symptom___9 == FALSE,
+      post_vaccine_symptom___10 == FALSE,
+      post_vaccine_symptom___11 == FALSE,
+      post_vaccine_symptom___12 == FALSE,
+      postvax1_local_pain == 0,
+      postvax1_local_redness == 0,
+      postvax1_local_swelling == 0), "Yes", as.character(any_1st_dose_sx)),
+    any_symptom_v2 = any_1st_dose_sx_v2,
+    any_symptom_v2 = if_else(any_1st_dose_sx_v2 == 2 & all(
+      post_vaccine_symptom_v2___1 == FALSE,
+      post_vaccine_symptom_v2___2 == FALSE,
+      post_vaccine_symptom_v2___3 == FALSE,
+      post_vaccine_symptom_v2___4 == FALSE,
+      post_vaccine_symptom_v2___5 == FALSE,
+      post_vaccine_symptom_v2___6 == FALSE,
+      post_vaccine_symptom_v2___7 == FALSE,
+      post_vaccine_symptom_v2___8 == FALSE,
+      post_vaccine_symptom_v2___9 == FALSE,
+      post_vaccine_symptom_v2___10 == FALSE,
+      post_vaccine_symptom_v2___11 == FALSE,
+      post_vaccine_symptom_v2___12 == FALSE,
+      postvax1_local_pain_v2 == 0,
+      postvax1_local_redness_v2 == 0,
+      postvax1_local_swelling_v2 == 0), "No", as.character(any_1st_dose_sx_v2)),
+    any_symptom_v2 = if_else(any_1st_dose_sx_v2 == 2 & !all(
+      post_vaccine_symptom_v2___1 == FALSE,
+      post_vaccine_symptom_v2___2 == FALSE,
+      post_vaccine_symptom_v2___3 == FALSE,
+      post_vaccine_symptom_v2___4 == FALSE,
+      post_vaccine_symptom_v2___5 == FALSE,
+      post_vaccine_symptom_v2___6 == FALSE,
+      post_vaccine_symptom_v2___7 == FALSE,
+      post_vaccine_symptom_v2___8 == FALSE,
+      post_vaccine_symptom_v2___9 == FALSE,
+      post_vaccine_symptom_v2___10 == FALSE,
+      post_vaccine_symptom_v2___11 == FALSE,
+      post_vaccine_symptom_v2___12 == FALSE,
+      postvax1_local_pain_v2 == 0,
+      postvax1_local_redness_v2 == 0,
+      postvax1_local_swelling_v2 == 0
+      ), "Yes", as.character(any_1st_dose_sx_v2))) %>%
+  mutate(any_symptom_v1 = case_when(any_symptom_v1 == "Yes" ~ TRUE,
+                               any_symptom_v1 == "No" ~ FALSE, 
+                               TRUE ~ NA),
+         any_symptom_v2 = case_when(any_symptom_v2 == "Yes" ~ TRUE,
+                               any_symptom_v2 == "No" ~ FALSE, 
+                               TRUE ~ NA),
+         no_symptom_v1 = !(any_symptom_v1),
+         no_symptom_v2 = !(any_symptom_v2))
+#this makes 7 new variables mostly to check the rest of responses for accuracy to certain questions
+#to be safe maybe we should select people who report any symptoms after each vaccine.
+
+###################################################################
+###############################################
+
+#creating numeric variables
+vaxd_data <- vaxd_data %>% mutate(
+    across(starts_with("post_vaccine_symptom_"), ~as.logical(as.numeric(.x))),
+    across(contains("timing"), as.numeric),
+    across(contains("sev"), as.numeric))
+
+
+
+############################################################################
+####################################################################
+#COMPUTING ANALYSIS VARIABLES
+#need to group by and count TRUE sympt_7 
+
+
+#will likely need to run comparisons with HCW data before filtering to check power
+vaxd_data <- vaxd_data %>% rowwise() %>% 
+              mutate(gi_timing_avg = mean(c(nausea_timing,
+                           vomiting_timing, diarrhea_timing,
+                           constipation_timing, gerd_timing,
+                           abdo_timing), na.rm=TRUE),
+                     gi_sev_avg = mean(c(nausea_sev, 
+                           vomiting_sev, diarrhea_sev,
+                           constipation_sev, stomach_burning_sev, 
+                           abdominal_pain_sev),na.rm= TRUE),
+                     gi_timing_avg_v2 = mean(c(nausea_timing_v2,
+                           vomiting_timing_v2, diarrhea_timing_v2,
+                           constipation_timing_v2, gerd_timing_v2,
+                           abdo_timing_v2), na.rm=TRUE),
+                     gi_sev_avg_v2 = mean(c(nausea_sev_v2,
+                            vomiting_sev_v2, diarrhea_sev_v2,
+                           constipation_sev_v2, stomach_burning_sev_v2, 
+                           abdominal_pain_sev_v2),na.rm= TRUE))
+
+
+vaxd_data%>% select(nausea_timing,vomiting_timing, diarrhea_timing,
+                    constipation_timing,gerd_timing,
+                    abdo_timing, gi_timing_avg, 
+                    gi_sev_avg) %>% str()
+
+
+vaxd_data %>% filter(any_1st_dose_sx == 1 | 
+           any_1st_dose_sx_v2 == 1) %>% 
+    group_by(id_hcw_ibd, post_vaccine_symptom___7) %>% 
+    summarise(
+      n_symptafterdose1 = n())
+#74 people experienced gi symptoms
+#n=1257
+vaxd_data %>% filter(any_1st_dose_sx == 1 | 
+           any_1st_dose_sx_v2 == 1) %>% group_by(
+             id_hcw_ibd, post_vaccine_symptom_v2___7) %>% 
+  summarise(
+    n_symptafterdose2 = n())
+
+vaxd_data %>% group_by(id_hcw_ibd) %>% 
+  summarise(n_per_group=n(), 
+            avg_gi_timing = mean(gi_timing_avg, na.rm=T),
+            sd_gi_timing = sd(gi_timing_avg, na.rm = T),
+            n_gi_timing = sum(!is.na(gi_timing_avg)),
+            n_gi_sev = sum(!is.na(gi_sev_avg)),
+            avg_gi_sev = mean(gi_sev_avg, na.rm = T),
+            sd_gi_sev = sd(gi_sev_avg, na.rm = T)) %>% 
+  ungroup
+#This checks out. there is not a ton of variation but we can work with this
+vaxd_data %>% filter(!is.na(vaccine_type) | !is.na(vaccine_type_v2)) %>% 
+  group_by(id_hcw_ibd) %>% 
+  summarise(n_per_group=n(), 
+            avg_gi_timing = mean(gi_timing_avg, na.rm=T),
+            sd_gi_timing = sd(gi_timing_avg, na.rm = T),
+            n_gi_timing = sum(!is.na(gi_timing_avg)),
+            n_gi_sev = sum(!is.na(gi_sev_avg)),
+            avg_gi_sev = mean(gi_sev_avg, na.rm = T),
+            sd_gi_sev = sd(gi_sev_avg, na.rm = T),
+            n_any_yes_gi =sum(!is.na(post_vaccine_symptom___7))) %>% 
+  ungroup
+label(vaxd_data$post_vaccine_symptom___7)
+
+vaxd_data %>% filter(!is.na(vaccine_type) | !is.na(vaccine_type_v2)) %>% 
+  group_by(id_hcw_ibd, vaccine_type) %>% 
+  summarise(n_per_group=n(), 
+            avg_gi_timing = mean(gi_timing_avg, na.rm=T),
+            sd_gi_timing = sd(gi_timing_avg, na.rm = T),
+            n_gi_timing = sum(!is.na(gi_timing_avg)),
+            n_gi_sev = sum(!is.na(gi_sev_avg)),
+            avg_gi_sev = mean(gi_sev_avg, na.rm = T),
+            sd_gi_sev = sd(gi_sev_avg, na.rm = T)) %>% 
+  ungroup
+#this anova will be very interesting to see
+#should check that vaccine_type is consistently responded after each survey
+
+
+vaxd_data_2 <- vaxd_data %>% filter(!is.na(vaccine_type) | !is.na(vaccine_type_v2))
+
+vaxd_data %>% group_by(id_hcw_ibd,) %>% 
+  summarise(n_per_group=n()) %>% ungroup()
+
+##################################################
+###############
+#for table1 descriptive reporting
+#Severity factors dose 1 & 2
+
+vaxd_data <- vaxd_data %>%  mutate(
+  nausea_sev_factor =
+    factor(nausea_sev,levels=c("0","1","2","3","4")), 
+  vomiting_sev_factor = 
+    factor(vomiting_sev,levels=c("0","1","2","3","4")),
+  diarrhea_sev_factor =
+    factor(diarrhea_sev,levels=c("0","1","2","3","4")),
+  constipation_sev_factor =
+    factor(constipation_sev,levels=c("0","1","2","3","4")),
+  stomach_burning_sev_factor =
+    factor(stomach_burning_sev,levels=c("0","1","2","3","4")),
+  abdominal_pain_sev_factor =
+    factor(abdominal_pain_sev,levels=c("0","1","2","3","4")), #end dose 1
+   nausea_sev_v2_factor =
+    factor(nausea_sev_v2,levels=c("0","1","2","3","4")),
+  vomiting_sev_v2_factor =
+    factor(vomiting_sev_v2,levels=c("0","1","2","3","4")),
+  diarrhea_sev_v2_factor =
+    factor(diarrhea_sev_v2,levels=c("0","1","2","3","4")),
+  constipation_sev_v2_factor =
+    factor(constipation_sev_v2,levels=c("0","1","2","3","4")),
+  stomach_burning_sev_v2_factor =
+    factor(stomach_burning_sev_v2,levels=c("0","1","2","3","4")),
+  abdominal_pain_sev_v2_factor =
+    factor(abdominal_pain_sev_v2,levels=c("0","1","2","3","4")))
+
+
+###########################################
+#CREATING BINARY VARS for visualization and checking
+#nausea_sev_binary
+#vomiting_sev_binary
+#diarrhea_sev_binary
+#constipation_sev_binary
+#stomach_burning_sev_binary
+#abdominal_pain_sev_binary
+#sev maxes and binaries dose 1 & 2
+vaxd_data <- vaxd_data %>%  mutate(
+  gi_severity_max_v1 = if_else(
+    covid19_vaccine_symptoms_after_dose_1_complete != 2, NA_real_, 
+          if_else(post_vaccine_symptom___7 == TRUE,
+                pmax(nausea_sev, vomiting_sev, diarrhea_sev,
+                 constipation_sev, stomach_burning_sev,
+                 abdominal_pain_sev, na.rm=T), 0)),
+  gi_severity_max_v2 = if_else(
+    covid19_vaccine_symptoms_after_dose_2_complete != 2, NA_real_, 
+          if_else(post_vaccine_symptom_v2___7 == TRUE,
+                pmax(nausea_sev_v2, vomiting_sev_v2, diarrhea_sev_v2,
+                 constipation_sev_v2, stomach_burning_sev_v2,
+                 abdominal_pain_sev_v2, na.rm=T), 0)),
+  nausea_sev_binary = case_when(nausea_sev > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE), #dose 1 binaries
+  vomiting_sev_binary= case_when(vomiting_sev > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+  diarrhea_sev_binary= case_when(diarrhea_sev > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+  constipation_sev_binary= case_when(constipation_sev > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+    stomach_burning_sev_binary= case_when(stomach_burning_sev > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+    abdominal_pain_sev_binary=case_when(abdominal_pain_sev > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+  nausea_sev_v2_binary= case_when(nausea_sev_v2 > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE), #start dose 2 binaries
+    vomiting_sev_v2_binary= case_when(vomiting_sev_v2 > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+    diarrhea_sev_v2_binary= case_when(diarrhea_sev_v2 > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+    constipation_sev_v2_binary= case_when(constipation_sev_v2 > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+    stomach_burning_sev_v2_binary= case_when(
+            stomach_burning_sev_v2 > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE),
+    abdominal_pain_sev_v2_binary=case_when(
+            abdominal_pain_sev_v2 > 0 ~ TRUE,
+             post_vaccine_symptom___7 == TRUE ~ FALSE))
+
+
+vaxd_data <- vaxd_data %>%  mutate(
+  gi_severity_max_v1_factor =
+    factor(gi_severity_max_v1,levels=c("0","1","2","3","4")), 
+  gi_severity_max_v2_factor = 
+    factor(gi_severity_max_v2,levels=c("0","1","2","3","4")))
+
+#looking at total number of symptoms per respondent
+vaxd_data <- vaxd_data %>% rowwise() %>% mutate(
+  gi_sev_symptom_sum = sum(c(nausea_sev_binary, vomiting_sev_binary,
+                    diarrhea_sev_binary, constipation_sev_binary, 
+                    stomach_burning_sev_binary,
+                    abdominal_pain_sev_binary), na.rm=T),
+    gi_sev_symptom_sum_v2 = sum(c(nausea_sev_v2_binary,
+                  vomiting_sev_v2_binary, diarrhea_sev_v2_binary, 
+                  constipation_sev_v2_binary, 
+                  stomach_burning_sev_v2_binary,
+                  abdominal_pain_sev_v2_binary), na.rm=T)) 
+
+
+```
+
+
+```{r}
+#percent of gi symptoms to any symptoms? 
+#need a prop table with custom n sizes based on responses to other questions in the questionnaire
+#percent of gi symptoms among all respondents
+
+prop_table1a <- vaxd_data %>% group_by(id_hcw_ibd_factor) %>% 
+  summarise(data_n = round(n(), digits = 0),
+        n_completed_dose1_surv = 
+          round(sum(covid19_vaccine_symptoms_after_dose_1_complete==2),
+                    digits = 0),
+        n_completed_dose2_surv =
+          round(sum(covid19_vaccine_symptoms_after_dose_2_complete==2),
+                  digits = 0),
+        n_any_symptoms_dose1 = round(sum(any_new_symptom_v1 == TRUE,
+                                         na.rm = T), digits = 0),
+        n_any_symptoms_dose2 = round(sum(any_new_symptom_v2== TRUE,
+                                   na.rm = T), digits = 0),
+       n_gi_sx_dose1 = round(sum(as.numeric(post_vaccine_symptom___7)),
+                             digits = 0), 
+        n_gi_sx_dose2 =
+          round(sum(as.numeric(post_vaccine_symptom_v2___7)),
+                              digits = 0),
+       mean_gi_sev_symptom_n = 
+          round(sum(gi_sev_symptom_sum, na.rm= TRUE)/
+            sum(as.numeric(post_vaccine_symptom___7), na.rm = TRUE), digits = 2),
+       mean_gi_sev_symptom_n_v2 = 
+          round(sum(gi_sev_symptom_sum_v2, na.rm= TRUE)/
+            sum(as.numeric(post_vaccine_symptom_v2___7), na.rm = TRUE), digits = 2),
+       blank2 = NA,
+       blank = NA,
+       pct_new_symptoms_dose1=
+            round(sum(any_new_symptom_v1 == TRUE, na.rm = T)/
+              sum(covid19_vaccine_symptoms_after_dose_1_complete==2,
+              na.rm = T)*100, digits = 2),
+        pct_new_symptoms_dose2=
+              round(sum(as.numeric(any_new_symptom_v2 == TRUE), 
+              na.rm = T)/sum(
+              covid19_vaccine_symptoms_after_dose_2_complete==2,
+                  na.rm = T)*100, digits = 2),
+        pct_gi_symptoms_dose1=
+              round(sum(as.numeric(post_vaccine_symptom___7))/
+              sum(covid19_vaccine_symptoms_after_dose_1_complete==2, 
+                  na.rm = T)*100, digits = 2),
+        pct_gi_symptoms_dose2=
+              round(sum(as.numeric(post_vaccine_symptom_v2___7))/
+              sum(covid19_vaccine_symptoms_after_dose_2_complete==2, 
+                  na.rm = T)*100, digits = 2))
+
+
+
+prop_table1a <- prop_table1a %>%
+  labelled::set_variable_labels(
+    n_completed_dose1_surv = "Count of Completed Surveys, Dose 1",
+    n_completed_dose2_surv = "Count of Completed Surveys, Dose 2",
+    n_any_symptoms_dose1 = "Count of ANY NEW Adverse Event after Dose 1",
+     n_any_symptoms_dose2 = "Count of Any New Adverse Event after Dose 2",
+    n_gi_sx_dose1 = "Count of People with New GI Symptoms after Dose 1",
+    n_gi_sx_dose2 = "Count of People with New GI Symptoms after Dose ",
+     mean_gi_sev_symptom_n = 
+      "Average number of GI symptoms for Dose 1",
+    mean_gi_sev_symptom_n_v2 =
+      "Average number of GI Symptoms for Dose 2",
+    pct_new_symptoms_dose1=
+        "Percent of People with ANY NEW Symptoms who completed Dose 1 Survey",
+    pct_new_symptoms_dose2=
+        "Percent of People with ANY NEW Symptoms who completed Dose 2 Survey",
+    pct_gi_symptoms_dose1 =
+      "Percent of People with GI Symptoms who completed Dose 1 Survey",
+    pct_gi_symptoms_dose2 =
+      "Percent of People with GI Symptoms who completed Dose 2 Survey")
+
+
+prop_table1b <- pivot_longer(prop_table1a, cols=2:16, names_to = "name", values_to = "value")
+
+#replacing initial var names w descriptions
+prop_table1b$name <- str_replace_all(prop_table1b$name, c(
+    "n_completed_dose1_surv" =
+              "n of Completed Surveys Dose 1", 
+    "n_completed_dose2_surv" =
+                "n of Completed Surveys Dose 2",
+    "n_any_symptoms_dose1" =
+                "n of ANY NEW Adverse Event after Dose 1",
+    "n_any_symptoms_dose2" =
+            "n of ANY NEW Adverse Event after Dose 2",
+    "n_gi_sx_dose1" =
+            "n of New GI Symptoms after Dose 1",
+    "n_gi_sx_dose2" = 
+            "n of New GI Symptoms after Dose 2",
+    "mean_gi_sev_symptom_n" = 
+            "Average number of GI symptoms for Dose 1",
+    "mean_gi_sev_symptom_n_v2" = 
+          "Average number of GI Symptoms for Dose 2",
+    "blank2"= "",
+    "blank"= "PERCENTAGES based on COMPLETED Surveys",
+    "pct_new_symptoms_dose1"=
+      "% Reporting ANY NEW Symptoms after Dose 1",
+    "pct_new_symptoms_dose2"=
+        "% Reporting ANY NEW Symptoms after Dose 2",
+        "pct_gi_symptoms_dose1" =
+        "% Reporting GI Symptoms after Dose 1",
+    "pct_gi_symptoms_dose2" =
+      "% Reporting GI Symptoms after Dose 2"
+        )) 
+
+
+prop_table1c <- prop_table1b %>%  pivot_wider(names_from =
+                                  "id_hcw_ibd_factor",values_from =
+                                    "value") %>% as_tibble()
+
+prop_table1c
+#top level view of data
+```
+
+Creating tables with Table 1 (see package info for details)
+```{r}
+#lets also break down the demographics
+
+table1(~ sex+ 
+         age +
+         srv_race +
+          ethnicity | id_hcw_ibd_factor, 
+        data=vaxd_data, overall="Total", droplevels = FALSE)
+
+
+
+
+tbl1_dta_dose1 <- vaxd_data %>% filter(covid19_vaccine_symptoms_after_dose_1_complete == 2)
+
+table1(~ any_new_symptom_v1 +
+         post_vaccine_symptom___7 +
+        nausea_sev_binary +
+        vomiting_sev_binary +
+        diarrhea_sev_binary +
+        constipation_sev_binary +
+        stomach_burning_sev_binary +
+        abdominal_pain_sev_binary +
+         gi_severity_max_v1_factor +
+         gi_timing_max_v1_factor +
+         gi_sev_symptom_sum | id_hcw_ibd_factor, 
+        data=tbl1_dta_dose1, overall="Total", droplevels = FALSE)
+
+
+```
+Also running some chi sq tests 
+```{r}
+
+
+vars_cat_dose1 <- c("post_vaccine_symptom___7", 
+                    "nausea_sev_binary",
+                    "vomiting_sev_binary", "diarrhea_sev_binary",
+                    "constipation_sev_binary",
+                    "stomach_burning_sev_binary", 
+                    "abdominal_pain_sev_binary" )
+
+vars_dose1 <- c("post_vaccine_symptom___7", 
+                "nausea_sev_binary",
+                "vomiting_sev_binary", "diarrhea_sev_binary",
+                "constipation_sev_binary", "stomach_burning_sev_binary",
+                "abdominal_pain_sev_binary", "gi_sev_symptom_sum")
+
+dose1_n_by_sympt <- CreateTableOne(vars = vars_dose1,
+                                   data = tbl1_dta_dose1,
+                                   strata = "id_hcw_ibd_factor",
+                                   factorVars = vars_cat_dose1)
+
+dose1_n_by_sympt
+
+chisq.test(tbl1_dta_dose1$id_hcw_ibd_factor,tbl1_dta_dose1$post_vaccine_symptom___7)
+```
+
+
+A few visualizations 
+```{r}
+#################
+#stacked barchart with table maxes 
+stackedchart_tablemaxes <- tbl1_dta_dose1 %>% group_by(id_hcw_ibd_factor) %>% 
+  summarise( 
+     max_mild_severity = 
+        round(sum(gi_severity_max_v1_factor =="MILD", na.rm = TRUE),
+              digits = 1),
+      max_moderate_severity = 
+        round(sum(gi_severity_max_v1_factor =="MODERATE", na.rm = TRUE),
+              digits = 1), 
+     max_severe_severity = 
+        round(sum(gi_severity_max_v1_factor =="SEVERE", na.rm = TRUE),
+              digits = 1), 
+     max_extreme_severity = 
+        round(sum(gi_severity_max_v1_factor =="EXTREME", na.rm = TRUE),
+              digits = 1))
+stackedchart_tablemaxesb <- pivot_longer(stackedchart_tablemaxes, cols=2:5, names_to = "name", values_to = "value")
+#levels(vaxd_data$gi_severity_max_v1_factor)=c("None","MILD","MODERATE","SEVERE","EXTREME")
+
+
+stackedchart_tablemaxesc <- stackedchart_tablemaxesb %>%  pivot_wider(names_from =
+                                  "id_hcw_ibd_factor", values_from =
+                                    "value") %>% as_tibble() 
+stackedchart_tablemaxesd <-column_to_rownames(stackedchart_tablemaxesc,var = "name")
+stackedchart_tablemaxesd <- as.matrix(stackedchart_tablemaxesd)
+
+#outputs
+
+stackedchart_tablemaxesd
+
+barplot(stackedchart_tablemaxesd, 
+        col=palette.colors(n= 4 , palette= "Pastel 2") , 
+        border="white", 
+        space=0.04, 
+        font.axis=2, 
+        xlab="group",
+        ylab = "",
+        axisnames = TRUE,
+        legend.text = TRUE,
+        args.legend = list(title= "Max GI Symptom Severity Dose 1", x = "right", cex = .7 ))
+
+# Get the stacked barplot
+#groups needs to be each column
+#var values need to be rows
+
+#table for stacked proportions of Max values
+stacked_prop_maxes <- round(prop.table(stackedchart_tablemaxesd,
+                                 margin = 2), digits = 3)
+
+stacked_prop_maxes
+barplot(stacked_prop_maxes, 
+        col=palette.colors(n= 4 , palette= "Pastel 2") , 
+        border="white", 
+        space=0.04, 
+        font.axis=2, 
+        xlab="group",
+        ylab = "",
+        axisnames = TRUE,
+        legend.text = TRUE,
+        args.legend = list(title= "Max GI Symptom Severity Dose 1", x = "right", cex = .7 ))
+
+```
+
+
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
