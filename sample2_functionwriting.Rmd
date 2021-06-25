@@ -1,5 +1,5 @@
 ---
-title: "Lecture 9 problem set"
+title: "Intro to R Lecture 9 problem set"
 author: "Alfredo Novoa"
 date: "December 7, 2018"
 urlcolor: blue
@@ -21,13 +21,6 @@ knitr::opts_chunk$set(collapse = TRUE, comment = "#>", highlight = TRUE)
 # Required reading and instructions  
 
 ##  Required reading before next class
-
-
-## General Problem Set instructions  
-
-In this homework, you will specify `pdf_document` as the output format. You must have LaTeX installed in order to create pdf documents. 
-
-If you have not yet installed MiKTeX/MacTeX, I recommend installing TinyTeX, which is much simpler to install!
 
 - Instructions for installation of TinyTeX can be found [Here](https://bookdown.org/yihui/rmarkdown/installation.html#installation)
 
